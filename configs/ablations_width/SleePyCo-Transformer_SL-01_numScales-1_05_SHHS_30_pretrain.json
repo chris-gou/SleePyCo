@@ -1,0 +1,8 @@
+{
+
+    "training_params": {
+        
+        "width_multiplier": 0.5
+    },
+    "name": "SleePyCo-Transformer_SL-01_numScales-1_05_SHHS_30_pretrain"
+}

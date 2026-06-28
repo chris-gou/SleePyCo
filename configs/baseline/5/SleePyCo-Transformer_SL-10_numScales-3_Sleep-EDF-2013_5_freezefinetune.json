@@ -1,0 +1,18 @@
+{
+    "dataset": {
+        "name": "Sleep-EDF-2013",
+        "eeg_channel": "Fpz-Cz",
+        "num_splits": 20,
+        "seq_len": 10,
+        "target_idx": -1,
+        "root_dir": "./"
+    },
+    "training_params": {
+        "epoch_duration": 5,
+        "base_epoch_duration": 30,
+        "fs": 100,
+        "hop": 0
+    },
+    "name": "SleePyCo-Transformer_SL-10_numScales-3_Sleep-EDF-2013_5_freezefinetune",
+    "run": 3
+}

@@ -1,12 +1,12 @@
 {
     "dataset": {
         "name": "SHHS",
-        "eeg_channel": "C4-A1",
+        "eeg_channel": "EEG",
         "num_splits": 1,
         "seq_len": 10,
         "target_idx": -1,
-        "root_dir": "./"
-    },
+        "root_dir": "./" ,
+        "max_subjects": 600},
 
     "backbone": {
         "name": "SleePyCo",
@@ -40,7 +40,11 @@
         "val_period": 5000,
         "early_stopping": {
             "mode": "min",
-            "patience": 20
-        }
+            "patience": 8
+        },
+        "epoch_duration": 30,
+        "base_epoch_duration": 30,
+        "fs": 100,
+        "hop": 0
     }
 }

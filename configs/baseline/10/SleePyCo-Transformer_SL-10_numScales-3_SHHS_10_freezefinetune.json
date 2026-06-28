@@ -1,0 +1,22 @@
+{
+    "dataset": {
+        "name": "SHHS",
+        "eeg_channel": "EEG",
+        "num_splits": 1,
+        "seq_len": 10,
+        "target_idx": -1,
+        "root_dir": "./"
+    },
+    "backbone": {
+        "name": "SleePyCo",
+        "init_weights": false,
+        "dropout": false
+    },
+    "training_params": {
+        "epoch_duration": 10,
+        "base_epoch_duration": 30,
+        "fs": 100,
+        "hop": 0
+    },
+    "name": "SleePyCo-Transformer_SL-10_numScales-3_SHHS_10_freezefinetune"
+}

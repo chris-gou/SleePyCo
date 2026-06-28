@@ -1,8 +1,8 @@
 {
     "dataset": {
-        "name": "Physio2018",
-        "eeg_channel": "C3-M2",
-        "num_splits": 5,
+        "name": "Sleep-EDF-2013",
+        "eeg_channel": "Fpz-Cz",
+        "num_splits": 20,
         "seq_len": 1,
         "target_idx": 0,
         "root_dir": "./"
@@ -10,11 +10,9 @@
     "backbone": {
         "name": "SleePyCo",
         "init_weights": false,
-        "dropout": false
-    },
-    "proj_head": {
-        "name": "MLP",
-        "dim": 128
+        "dropout": false,
+        "num_blocks": 5,
+        "width_multiplier": 0.5
     },
     "training_params": {
         "mode": "pretrain",
@@ -27,10 +25,7 @@
         "early_stopping": {
             "mode": "min",
             "patience": 10
-        },
-        "epoch_duration": 30,
-        "base_epoch_duration": 30,
-        "fs": 100,
-        "hop": 0
-    }
+        }
+    },
+    "name": "SleePyCo-Transformer_SL-01_numScales-3_SleepEDF-2013_width-0.5_pretrain"
 }

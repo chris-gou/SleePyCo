@@ -1,0 +1,12 @@
+{
+    "dataset": {
+        "name": "Physio2018",
+        "eeg_channel": "C3-M2",
+        "num_splits": 5,
+        "seq_len": 10,
+        "target_idx": -1,
+        "root_dir": "./"
+    },
+    "name": "SleePyCo-Transformer_SL-10_numScales-3_Physio2018_30_freezefinetune",
+    "run": 5
+}

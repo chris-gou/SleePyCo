@@ -1,0 +1,7 @@
+{
+    "training_params": {
+        "epoch_duration": 5,
+        "width_multiplier": 0.5
+    },
+    "name": "SleePyCo-Transformer_SL-10_numScales-3_05_Physio2018_5_freezefinetune"
+}

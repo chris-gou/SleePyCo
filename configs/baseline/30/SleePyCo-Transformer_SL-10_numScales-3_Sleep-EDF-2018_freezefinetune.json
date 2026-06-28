@@ -1,0 +1,12 @@
+{
+    "dataset": {
+        "name": "Sleep-EDF-2018",
+        "eeg_channel": "Fpz-Cz",
+        "num_splits": 10,
+        "seq_len": 10,
+        "target_idx": -1,
+        "root_dir": "./"
+    },
+    "name": "SleePyCo-Transformer_SL-10_numScales-3_Sleep-EDF-2018_30_freezefinetune",
+    "run": 3
+}

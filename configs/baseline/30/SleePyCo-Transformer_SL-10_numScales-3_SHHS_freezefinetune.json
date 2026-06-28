@@ -1,0 +1,11 @@
+{
+    "dataset": {
+        "name": "SHHS",
+        "eeg_channel": "EEG",
+        "num_splits": 1,
+        "seq_len": 10,
+        "target_idx": -1,
+        "root_dir": "./"
+    },
+    "name": "SleePyCo-Transformer_SL-10_numScales-3_SHHS_30_freezefinetune"
+}

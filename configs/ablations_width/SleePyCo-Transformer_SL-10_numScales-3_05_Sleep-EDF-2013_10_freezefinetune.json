@@ -1,0 +1,7 @@
+{
+    "training_params": {
+        "width_multiplier": 0.5,
+        "epoch_duration": 10
+    },
+    "name": "SleePyCo-Transformer_SL-10_numScales-3_05_Sleep-EDF-2013_10_freezefinetune"
+}
