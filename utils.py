@@ -8,12 +8,14 @@ import numpy as np
 import sklearn.metrics as skmet
 from terminaltables import SingleTable
 from termcolor import colored
+import json
 
 
 _, term_width = os.popen('stty size', 'r').read().split()
 term_width = int(term_width)
 
 TOTAL_BAR_LENGTH = 25.
+DB_PATH = '/mnt/truenas_db/user/christina'
 last_time = time.time()
 begin_time = last_time
 
@@ -171,8 +173,18 @@ class EarlyStopping:
         self.init_metric = val_metric
 
 
-def summarize_result(config, fold, y_true, y_pred, save=True):
-    os.makedirs('results', exist_ok=True)
+def summarize_result(config, fold, y_true, y_pred, save=True, latency_stats=None, elapsed_time=None, epochs_per_fold=None, summary=False, cpu_sampler=None, streaming = False, inference_times=None):
+    output_dir = os.path.join(DB_PATH, 'sleepyco')
+    os.makedirs(output_dir, exist_ok=True)
+    results_file_base_name = config['name']
+
+    if cpu_sampler is not None:
+        results_file_name = f"cpu_{results_file_base_name}" if not streaming else f"cpu_streaming_{results_file_base_name}"
+    else:
+        results_file_name = results_file_base_name if not streaming else f"streaming_{results_file_base_name}"
+
+    results_file = results_file_name+'.txt'
+    
     y_pred_argmax = np.argmax(y_pred, 1)
     result_dict = skmet.classification_report(y_true, y_pred_argmax, digits=3, output_dict=True)
     cm = skmet.confusion_matrix(y_true, y_pred_argmax)
@@ -223,9 +235,21 @@ def summarize_result(config, fold, y_true, y_pred, save=True):
     print('\n' + perclass_dt.table)
     print(colored(' A', 'cyan') + ': Actual Class, ' + colored('P', 'green') + ': Predicted Class' + '\n\n')
     
+    # save raw latency array alongside results
+    if inference_times is not None and save:
+        latency_dir = os.path.join(output_dir, 'latencies')
+        os.makedirs(latency_dir, exist_ok=True)
+        if streaming:
+            latency_fname = os.path.join(latency_dir, f'streaming_latency_{config["name"]}_fold{fold:02d}.npy')
+        else:
+            latency_fname = os.path.join(latency_dir, f'latency_{config["name"]}_fold{fold:02d}.npy')
+        np.save(latency_fname, np.array(inference_times))
+        print(f"[INFO] Raw latencies saved to {latency_fname}")
+        print(f"[DEBUG] Saving {len(inference_times)} latency measurements to {latency_fname}")
     if save:
-        with open(os.path.join('results', config['name'] + '.txt'), 'w') as f:
-            f.write(
+        try:
+            output_lines = []
+            output_lines.append(
                 str(fold) + ' ' +
                 str(round(result_dict['accuracy']*100, 1)) + ' ' + 
                 str(round(result_dict['macro avg']['f1-score']*100, 1)) + ' ' + 
@@ -236,6 +260,54 @@ def summarize_result(config, fold, y_true, y_pred, save=True):
                 str(round(result_dict['3.0']['f1-score']*100, 1)) + ' ' +
                 str(round(result_dict['4.0']['f1-score']*100, 1)) + ' '
             )
+
+            if latency_stats is not None and latency_stats.get('mean') is not None:
+                latency_data = [
+                    ['Metric', 'Value (ms)'],
+                    ['Mean',   f"{latency_stats['mean']:.3f}"],
+                    ['Std',    f"{latency_stats['std']:.3f}"],
+                    ['Min',    f"{latency_stats['min']:.3f}"],
+                    ['Max',    f"{latency_stats['max']:.3f}"],
+                    ['p50',    f"{latency_stats['p50']:.3f}"],
+                    ['p95',    f"{latency_stats['p95']:.3f}"],
+                    ['p99',    f"{latency_stats['p99']:.3f}"],
+                ]
+    
+                output_lines.append(
+                    f"\nLatency (ms) | mean={latency_stats['mean']:.3f} std={latency_stats['std']:.3f} "
+                    f"min={latency_stats['min']:.3f} max={latency_stats['max']:.3f} "
+                    f"p50={latency_stats['p50']:.3f} p95={latency_stats['p95']:.3f} p99={latency_stats['p99']:.3f} "
+                )
+                latency_dt = SingleTable(latency_data, colored('LATENCY STATS', 'red'))
+                print('\n' + latency_dt.table)
+
+            
+            if elapsed_time is not None:
+                output_lines.append(' elapsed time (s):' + str(round(elapsed_time, 2)))
+
+            if epochs_per_fold is not None:
+                avg_epochs = sum(epochs_per_fold) / len(epochs_per_fold)
+                output_lines.append(' avg epochs:' + str(round(avg_epochs, 1)))
+                output_lines.append(' epochs per fold:' + ' '.join([str(e) for e in epochs_per_fold]) + ' \n')
+
+            if cpu_sampler is not None:
+                cpu_stats = cpu_sampler.stats()
+                output_lines.append(
+                    f"\nCPU Usage (%) | mean={cpu_stats.get('mean', 'N/A'):.3f} p95={cpu_stats.get('p95', 'N/A'):.3f} max={cpu_stats.get('max', 'N/A'):.3f}\n"
+                )
+                print(f"\n[INFO] CPU Usage Stats - mean: {cpu_stats.get('mean', 'N/A'):.3f}%, p95: {cpu_stats.get('p95', 'N/A'):.3f}%, max: {cpu_stats.get('max', 'N/A'):.3f}%\n")
+
+            if not os.path.exists(results_file):
+                with open(results_file, 'w') as f:
+                    f.write('config: ' + str(config) + '\n')
+
+            with open(results_file, 'a') as f:
+                f.write(' '.join(output_lines))
+            print(f"[INFO] Results saved to {results_file}")
+
+        except Exception as e:
+            print(f"[ERROR] Saving results failed: {e}")
+
 
 
 def set_random_seed(seed_value, use_cuda=True):
