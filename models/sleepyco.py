@@ -9,27 +9,32 @@ class SleePyCoBackbone(nn.Module):
         super(SleePyCoBackbone, self).__init__()
 
         self.training_mode = config['training_params']['mode']
-
+        
+        out_channels_nr = [64, 128, 192, 256, 256] # original out channels per layer
+        if config['training_params'].get('width_multiplier'):
+            out_channels_nr = [int(c * config['training_params']['width_multiplier']) for c in out_channels_nr]
         # architecture
-        self.init_layer = self.make_layers(in_channels=1, out_channels=64, n_layers=2, maxpool_size=None, first=True)
-        self.layer1 = self.make_layers(in_channels=64, out_channels=128, n_layers=2, maxpool_size=5)
-        self.layer2 = self.make_layers(in_channels=128, out_channels=192, n_layers=3, maxpool_size=5)
-        self.layer3 = self.make_layers(in_channels=192, out_channels=256, n_layers=3, maxpool_size=5)
-        self.layer4 = self.make_layers(in_channels=256, out_channels=256, n_layers=3, maxpool_size=5)
+        self.init_layer = self.make_layers(in_channels=1, out_channels=out_channels_nr[0], n_layers=2, maxpool_size=None, first=True)
+        self.layer1 = self.make_layers(in_channels=out_channels_nr[0], out_channels=out_channels_nr[1], n_layers=2, maxpool_size=5)
+        self.layer2 = self.make_layers(in_channels=out_channels_nr[1], out_channels=out_channels_nr[2], n_layers=3, maxpool_size=5)
+        self.layer3 = self.make_layers(in_channels=out_channels_nr[2], out_channels=out_channels_nr[3], n_layers=3, maxpool_size=5)
+        self.layer4 = self.make_layers(in_channels=out_channels_nr[3], out_channels=out_channels_nr[4], n_layers=3, maxpool_size=5)
 
         if self.training_mode == 'freezefinetune' or self.training_mode == 'scratch':
             self.fp_dim = config['feature_pyramid']['dim']
             self.num_scales = config['feature_pyramid']['num_scales']
-            self.conv_c5 = nn.Conv1d(256, self.fp_dim, 1, 1, 0)
+            self.conv_c5 = nn.Conv1d(out_channels_nr[4], self.fp_dim, 1, 1, 0)
 
             if self.num_scales > 1:
-                self.conv_c4 = nn.Conv1d(256, self.fp_dim, 1, 1, 0)
+                self.conv_c4 = nn.Conv1d(out_channels_nr[3], self.fp_dim, 1, 1, 0)
             
             if self.num_scales > 2:
-                self.conv_c3 = nn.Conv1d(192, self.fp_dim, 1, 1, 0)
+                self.conv_c3 = nn.Conv1d(out_channels_nr[2], self.fp_dim, 1, 1, 0)
             
         if config['backbone']['init_weights']:
             self._initialize_weights()
+
+        self.out_channels = out_channels_nr[4]
 
     def _initialize_weights(self):
         for m in self.modules():
