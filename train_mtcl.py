@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 
 from utils import *
 from loader import EEGDataLoader
+from cpu_usage import CPUSampler
 from models.main_model import MainModel
 
 
@@ -126,11 +127,24 @@ class OneFoldTrainer:
                     break
             
     @torch.no_grad()
-    def evaluate(self, mode):
+    def evaluate(self, mode, cpu_sampling=False):
+        streaming = self.args.streaming
+
         self.model.eval()
         correct, total, eval_loss = 0, 0, 0
         y_true = np.zeros(0)
         y_pred = np.zeros((0, self.cfg['classifier']['num_classes']))
+
+        inference_times = []
+        cpu_sampler = None
+
+        if streaming and mode == 'test':
+            print(f"[DEBUG] Streaming evaluation enabled for mode: {mode}")
+            if cpu_sampling:
+                cpu_sampler = CPUSampler(interval=0.01)
+                print(f"[DEBUG] Starting CPU sampler for streaming evaluation")
+                cpu_sampler.start()
+
 
         for i, (inputs, labels) in enumerate(self.loader_dict[mode]):
             loss = 0
@@ -138,7 +152,22 @@ class OneFoldTrainer:
             inputs = inputs.to(self.device)
             labels = labels.view(-1).to(self.device)
 
+            # evaluation timing
+            if streaming and mode == 'test':
+                start = torch.cuda.Event(enable_timing=True)
+                end = torch.cuda.Event(enable_timing=True)
+                start.record()
+
             outputs = self.model(inputs)
+
+            if streaming and mode == 'test':
+                end.record()
+                torch.cuda.synchronize()
+                inference_times.append(start.elapsed_time(end))
+
+                # Periodic cache flush to prevent CUDA allocator fragmentation
+                if i > 0 and i % 500 == 0:
+                    torch.cuda.empty_cache()
             outputs_sum = torch.zeros_like(outputs[0])
 
             for j in range(len(outputs)):
@@ -154,26 +183,80 @@ class OneFoldTrainer:
 
             progress_bar(i, len(self.loader_dict[mode]), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
                     % (eval_loss / (i + 1), 100. * correct / total, correct, total))
+            
+        if streaming and mode == 'test' and cpu_sampling:
+            cpu_sampler.stop()
+            # cpu_stats = cpu_sampler.stats()
+
+        # Remove warm-up times
+        if inference_times:
+            warmup = max(10, int(0.05 * len(inference_times)))
+            inference_times = inference_times[warmup:]
+
+        def compute_stats(times):
+            if len(times) == 0:
+                return {k: None for k in ['mean', 'std', 'min', 'max', 'p50', 'p95', 'p99']}
+            return {
+                'mean': float(np.mean(times)),
+                'std':  float(np.std(times)),
+                'min':  float(np.min(times)),
+                'max':  float(np.max(times)),
+                'p50':  float(np.percentile(times, 50)),
+                'p95':  float(np.percentile(times, 95)),
+                'p99':  float(np.percentile(times, 99)),
+            }
+
+        latency_stats = compute_stats(inference_times)
+
+        if mode == 'test' and streaming:
+            print(f"\n{'='*50}")
+            print(f"Latency Statistics:")
+            print("Latency Statistics (streaming, batch_size=1):")
+            for key in ['mean', 'std', 'min', 'max', 'p50', 'p95', 'p99']:
+                val = latency_stats[key]
+                print(f"  {key.upper():>4}: {val:.3f} ms" if val is not None else f"  {key.upper():>4}: N/A")
+            if cpu_sampler:
+                s = cpu_sampler.stats()
+                print(f"  CPU mean: {s['mean']:.1f}%  p95: {s['p95']:.1f}%  max: {s['max']:.1f}%")
+            print(f"{'='*50}")
 
         if mode == 'val':
             return 100. * correct / total, eval_loss
         elif mode == 'test':
-            return y_true, y_pred
+            return y_true, y_pred, latency_stats, inference_times, cpu_sampler.stats() if cpu_sampler else None
         else:
             raise NotImplementedError
     
     def run(self):
+        trained_epochs = 0
+
+        resume_path = os.path.join(self.ckpt_path, self.ckpt_name)
+        if os.path.exists(resume_path):
+            print(f'[INFO] Resuming from checkpoint: {resume_path}')
+            self.model.load_state_dict(torch.load(resume_path))
+            # Restore early stopping best score so it doesn't overwrite immediately
+            self.early_stopping.best_score = None  # will re-evaluate on first val step
+
         for epoch in range(self.tp_cfg['max_epochs']):
             print('\n[INFO] Fold: {}, Epoch: {}'.format(self.fold, epoch))
             self.train_one_epoch(epoch)
+            trained_epochs += 1
             if self.early_stopping.early_stop:
                 break
         
         self.model.load_state_dict(torch.load(os.path.join(self.ckpt_path, self.ckpt_name)))
-        y_true, y_pred = self.evaluate(mode='test')
+        y_true, y_pred, latency, inference_times, cpu_sampler = self.evaluate(mode='test')
         print('')
 
-        return y_true, y_pred
+        return y_true, y_pred, latency, trained_epochs, inference_times, cpu_sampler
+    
+def update_config(base_config, override_config):
+    for key, value in override_config.items():
+        if key in base_config and isinstance(base_config[key], dict) and isinstance(value, dict):
+            update_config(base_config[key], value)
+        else:
+            base_config[key] = value
+    return base_config
 
 def main():
     warnings.filterwarnings("ignore", category=DeprecationWarning) 
@@ -183,6 +266,8 @@ def main():
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--gpu', type=str, default="0", help='gpu id')
     parser.add_argument('--config', type=str, help='config file path')
+    parser.add_argument('--override', type=str, help='config override path')
+
     args = parser.parse_args()
 
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   
@@ -193,19 +278,51 @@ def main():
 
     with open(args.config) as config_file:
         config = json.load(config_file)
-    config['name'] = os.path.basename(args.config).replace('.json', '')
+    if args.override:
+        with open(args.override) as f:
+            override_config = json.load(f)
+        update_config(config, override_config)
+    
+    if config['name'] is None:
+        config['name'] = os.path.basename(args.config).replace('.json', '') 
     
     Y_true = np.zeros(0)
     Y_pred = np.zeros((0, config['classifier']['num_classes']))
 
-    for fold in range(1, config['dataset']['num_splits'] + 1):
-        trainer = OneFoldTrainer(args, fold, config)
-        y_true, y_pred = trainer.run()
-        Y_true = np.concatenate([Y_true, y_true])
-        Y_pred = np.concatenate([Y_pred, y_pred])
-    
-        summarize_result(config, fold, Y_true, Y_pred)
-    
+    # latency stats
+    all_latency_stats = []
+
+    epochs_per_fold = []
+
+    try:
+        for fold in range(1, config['dataset']['num_splits'] + 1):
+            trainer = OneFoldTrainer(args, fold, config)
+            y_true, y_pred, latency_stats, trained_epochs, inference_times, cpu_sampler  = trainer.run()
+            epochs_per_fold.append(trained_epochs)
+            Y_true = np.concatenate([Y_true, y_true]) # accumulate across folds
+            Y_pred = np.concatenate([Y_pred, y_pred])
+            all_latency_stats.append(latency_stats)
+
+            valid_stats = [ls for ls in all_latency_stats if ls['mean'] is not None]
+            if valid_stats:
+                avg_latency = {
+                    'mean': np.mean([ls['mean'] for ls in valid_stats]),
+                    'std': np.mean([ls['std'] for ls in valid_stats]),
+                    'min': np.min([ls['min'] for ls in valid_stats]),
+                    'max': np.max([ls['max'] for ls in valid_stats]),
+                    'p50': np.mean([ls['p50'] for ls in valid_stats]),
+                    'p95': np.mean([ls['p95'] for ls in valid_stats]),
+                    'p99': np.mean([ls['p99'] for ls in valid_stats]),
+                }
+            else:
+                avg_latency = None
+            
+            summarize_result(config, fold, Y_true, Y_pred, latency_stats=avg_latency,
+                              epochs_per_fold=epochs_per_fold, inference_times=inference_times, cpu_sampler=cpu_sampler)
+
+    except Exception as e:
+        print(f"[ERROR] An error occurred during training of config {config['name']} and fold {fold}: {e}")
+        
 
 if __name__ == "__main__":
     main()
