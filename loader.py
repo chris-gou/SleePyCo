@@ -98,7 +98,11 @@ class EEGDataLoader(Dataset):
             inputs = np.stack(raw_inputs)  # (seq_len, window)
             labels = np.array(raw_labels)
         else:
-            npz_file = np.load(self.inputs[file_idx], mmap_mode='r')
+            if not hasattr(self, '_mmap_cache'):
+                self._mmap_cache = {}
+            if file_idx not in self._mmap_cache:
+                self._mmap_cache[file_idx] = np.load(self.inputs[file_idx], mmap_mode='r')
+            npz_file = self._mmap_cache[file_idx]
             inputs = npz_file['x'][start:start + seq_len]
             labels = npz_file['y'][start:start + seq_len]
 
