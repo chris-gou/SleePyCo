@@ -14,13 +14,8 @@ results = {}
 
 def calculate_flops(config, model, model_name=None):
     epoch_duration = config['training_params']['epoch_duration']
-
-    if model_name == 'Transformer':
-        input_tensor = torch.randn(10, 1, 128) # match what transformer expects: (seq_len, batch_size, model_dim)
-        input_shape = (10, 1, 128) # match what transformer expects: (seq_len, batch_size, model_dim)    
-    else:
-        input_tensor = torch.randn(1, 1, 100*epoch_duration) # batch size 1, 1 channels, 3000 time points (30s at 100Hz)
-        input_shape = (1, 1, 100*epoch_duration) # batch size 1, 1 channels, 3000 time points (30s at 100Hz)
+    input_tensor = torch.randn(1, 1, 100*epoch_duration) # batch size 1, 1 channels, 3000 time points (30s at 100Hz)
+    input_shape = (1, 1, 100*epoch_duration) # batch size 1, 1 channels, 3000 time points (30s at 100Hz)
 
     model.eval() # set to eval mode
     with torch.no_grad(): # disable gradient calculation
