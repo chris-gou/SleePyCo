@@ -21,9 +21,9 @@ class SleePyCoBackbone(nn.Module):
         self.layer4 = self.make_layers(in_channels=out_channels_nr[3], out_channels=out_channels_nr[4], n_layers=3, maxpool_size=5)
 
         if self.training_mode == 'freezefinetune' or self.training_mode == 'scratch':
-            self.fp_dim = config['feature_pyramid']['dim']
+            self.fp_dim = config['feature_pyramid']['dim'] # 128
             self.num_scales = config['feature_pyramid']['num_scales']
-            self.conv_c5 = nn.Conv1d(out_channels_nr[4], self.fp_dim, 1, 1, 0)
+            self.conv_c5 = nn.Conv1d(out_channels_nr[4], self.fp_dim, 1, 1, 0) 
 
             if self.num_scales > 1:
                 self.conv_c4 = nn.Conv1d(out_channels_nr[3], self.fp_dim, 1, 1, 0)
@@ -34,7 +34,7 @@ class SleePyCoBackbone(nn.Module):
         if config['backbone']['init_weights']:
             self._initialize_weights()
 
-        self.out_channels = out_channels_nr[4]
+        self.out_channels = out_channels_nr[4] # 256 for full width
 
     def _initialize_weights(self):
         for m in self.modules():
@@ -81,7 +81,7 @@ class SleePyCoBackbone(nn.Module):
                 p3 = self.conv_c3(c3)
                 out.append(p3)
         
-        return out
+        return out # out is a list of the feature pyramid outputs per each scale
 
 
 class MaxPool1d(nn.Module):
@@ -139,9 +139,13 @@ class ChannelGate(nn.Module):
     def forward(self, x):
         channel_att_sum = None
         for pool_type in self.pool_types:
+            print(x.size(2))
             if pool_type=='avg':
-                avg_pool = F.avg_pool1d(x, x.size(2), stride=x.size(2))
+                # avoid passing through F.avg_pool1d to avoid error due to kernel size
+                avg_pool = x.mean(dim=2, keepdim=True) 
                 channel_att_raw = self.mlp(avg_pool)
+                # avg_pool = F.avg_pool1d(x, x.size(2), stride=x.size(2))
+                # channel_att_raw = self.mlp(avg_pool)
             elif pool_type=='max':
                 max_pool = F.max_pool1d(x, x.size(2), stride=x.size(2))
                 channel_att_raw = self.mlp( max_pool )
