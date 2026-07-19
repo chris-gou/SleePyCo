@@ -56,7 +56,7 @@ class OneFoldEvaluator(OneFoldTrainer):
     def build_dataloader(self):
         batch_size = 1 if self.args.streaming else self.tp_cfg['batch_size']
         test_dataset = EEGDataLoader(self.cfg, self.fold, set='test')
-        test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False, num_workers=4*len(self.args.gpu.split(",")), pin_memory=True)
+        test_loader = DataLoader(dataset=test_dataset, batch_size=batch_size, shuffle=False, num_workers=4*len(self.args.gpu.split(",")) if not self.args.streaming else 0, pin_memory=not self.args.streaming,)
         print('[INFO] Dataloader prepared')
 
         return {'test': test_loader} 
@@ -117,7 +117,7 @@ def main():
         Y_true = np.concatenate([Y_true, y_true])
         Y_pred = np.concatenate([Y_pred, y_pred])
     
-        summarize_result(config, fold, Y_true, Y_pred)
+        summarize_result(config, fold, Y_true, Y_pred, streaming=args.streaming)
     
 
 if __name__ == "__main__":
