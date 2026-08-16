@@ -33,10 +33,13 @@ class EEGDataLoader(Dataset):
         self.hop = config['training_params']['hop']
 
         # fix datasets
-        self.dataset_path = os.path.join(self.root_dir, 'dset', self.dset_name, 'npz')
+        self.dataset_path = config['dataset']['dataset_path'] if config['dataset']['dataset_path'] else os.path.join(self.root_dir, 'dset', self.dset_name, 'npz')
+        print(f"[INFO] Loading dataset from {self.dataset_path}")
         self.inputs, self.labels, self.epochs = self.split_dataset()
         
         if self.epoch_duration != 30:
+            # check first if the data is actually pre-split
+            
             hop = int((self.hop if self.hop>0 else self.epoch_duration) * self.fs)
             if self.dset_name == 'SHHS':
                 print(f"[INFO] Using lazy splitting for SHHS with epoch duration {self.epoch_duration}s and hop {hop} samples")
@@ -70,7 +73,7 @@ class EEGDataLoader(Dataset):
     def __getitem__(self, idx):
         n_sample = int(self.epoch_duration) * self.sr * self.seq_len
         file_idx, start, seq_len = self.epochs[idx]
-        inputs = self.inputs[file_idx][idx:idx+seq_len]
+        # inputs = self.inputs[file_idx][idx:idx+seq_len]
 
         if self.epoch_duration != 30 and self.dset_name == 'SHHS':
             window = int(self.epoch_duration * self.sr)
@@ -100,11 +103,17 @@ class EEGDataLoader(Dataset):
         else:
             if not hasattr(self, '_mmap_cache'):
                 self._mmap_cache = {}
-            if file_idx not in self._mmap_cache:
-                self._mmap_cache[file_idx] = np.load(self.inputs[file_idx], mmap_mode='r')
-            npz_file = self._mmap_cache[file_idx]
-            inputs = npz_file['x'][start:start + seq_len]
-            labels = npz_file['y'][start:start + seq_len]
+            data = self.inputs[file_idx]
+            if isinstance(data, str):
+                if file_idx not in self._mmap_cache:
+                    self._mmap_cache[file_idx] = np.load(self.inputs[file_idx], mmap_mode='r')
+                npz_file = self._mmap_cache[file_idx]
+                inputs = npz_file['x'][start:start + seq_len]
+                labels = npz_file['y'][start:start + seq_len]
+            else:
+                npz_file = data
+                inputs = npz_file[start:start + seq_len]
+                labels = self.labels[file_idx][start:start + seq_len]
 
         if self.set == 'train':
             if self.training_mode == 'pretrain':
@@ -123,7 +132,7 @@ class EEGDataLoader(Dataset):
                 inputs = inputs.reshape(1, n_sample)
             inputs = torch.from_numpy(inputs).float()
         
-        labels = self.labels[file_idx][idx:idx+seq_len]
+        labels = self.labels[file_idx][start:start+seq_len]
         labels = torch.from_numpy(labels).long()
         labels = labels[self.target_idx]
         

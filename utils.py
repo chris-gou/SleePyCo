@@ -9,6 +9,8 @@ import sklearn.metrics as skmet
 from terminaltables import SingleTable
 from termcolor import colored
 import json
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 
 _, term_width = os.popen('stty size', 'r').read().split()
@@ -184,6 +186,7 @@ def summarize_result(config, fold, y_true, y_pred, save=True, latency_stats=None
         results_file_name = results_file_base_name if not streaming else f"streaming_{results_file_base_name}"
 
     results_file = results_file_name+'.txt'
+    results_path = os.path.join(output_dir, results_file)
     
     y_pred_argmax = np.argmax(y_pred, 1)
     result_dict = skmet.classification_report(y_true, y_pred_argmax, digits=3, output_dict=True)
@@ -297,13 +300,13 @@ def summarize_result(config, fold, y_true, y_pred, save=True, latency_stats=None
                 )
                 print(f"\n[INFO] CPU Usage Stats - mean: {cpu_stats.get('mean', 'N/A'):.3f}%, p95: {cpu_stats.get('p95', 'N/A'):.3f}%, max: {cpu_stats.get('max', 'N/A'):.3f}%\n")
 
-            if not os.path.exists(results_file):
-                with open(results_file, 'w') as f:
+            if not os.path.exists(results_path):
+                with open(results_path, 'w') as f:
                     f.write('config: ' + str(config) + '\n')
 
-            with open(results_file, 'a') as f:
+            with open(results_path, 'a') as f:
                 f.write(' '.join(output_lines))
-            print(f"[INFO] Results saved to {results_file}")
+            print(f"[INFO] Results saved to {results_path}")
 
         except Exception as e:
             print(f"[ERROR] Saving results failed: {e}")
@@ -320,3 +323,34 @@ def set_random_seed(seed_value, use_cuda=True):
         torch.cuda.manual_seed_all(seed_value) # gpu vars
         torch.backends.cudnn.deterministic = True  #needed
         torch.backends.cudnn.benchmark = False
+
+def plot_loss_curve(loss_history, save_path):
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(10, 6))
+    plt.plot(loss_history['train_loss'], label='Train Loss')
+    plt.plot(loss_history['val_loss'], label='Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss Curve')
+    plt.legend()
+    plt.grid()
+    plt.savefig(save_path)
+    plt.close()
+
+def plot_confusion_and_f1(y_true, y_pred, class_names, save_path_prefix):
+    pred_labels = y_pred.argmax(axis=1)
+    cm = skmet.confusion_matrix(y_true, pred_labels)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=class_names, yticklabels=class_names, ax=ax)
+    ax.set_xlabel('predicted labels')
+    ax.set_ylabel('true labels')
+    fig.savefig(f'{save_path_prefix}_confusion.png')
+    plt.close(fig)
+
+    per_class_f1 = skmet.f1_score(y_true, pred_labels, average=None)
+    fig, ax = plt.subplots()
+    ax.bar(class_names, per_class_f1)
+    ax.set_ylabel('F1')
+    ax.set_ylim(0, 1)
+    fig.savefig(f'{save_path_prefix}_per_class_f1.png')
+    plt.close(fig)
