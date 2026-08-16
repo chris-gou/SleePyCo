@@ -139,7 +139,7 @@ class ChannelGate(nn.Module):
     def forward(self, x):
         channel_att_sum = None
         for pool_type in self.pool_types:
-            print(x.size(2))
+            # print(x.size(2))
             if pool_type=='avg':
                 # avoid passing through F.avg_pool1d to avoid error due to kernel size
                 avg_pool = x.mean(dim=2, keepdim=True) 
