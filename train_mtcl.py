@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 from utils import *
 from loader import EEGDataLoader
-from cpu_usage import CPUSampler
+from cpu_usage import *
 from models.main_model import MainModel
 
 
@@ -40,6 +40,8 @@ class OneFoldTrainer:
         self.ckpt_name = 'ckpt_fold-{0:02d}.pth'.format(self.fold)
         self.early_stopping = EarlyStopping(patience=self.es_cfg['patience'], verbose=True, ckpt_path=self.ckpt_path, ckpt_name=self.ckpt_name, mode=self.es_cfg['mode'])
         
+        self.events = EventMarker()
+        self.loss_history = {'train_loss': [], 'val_loss': [], 'val_acc': [], 'val_step': []}
 
     def build_model(self):
         model = MainModel(self.cfg)
@@ -121,11 +123,16 @@ class OneFoldTrainer:
             if self.train_iter % self.tp_cfg['val_period'] == 0:
                 print('')
                 val_acc, val_loss = self.evaluate(mode='val')
+                self.loss_history['val_loss'].append(val_loss)
+                self.loss_history['val_acc'].append(val_acc)
+                self.loss_history['val_step'].append(self.train_iter)
                 self.early_stopping(val_acc, val_loss, self.model)
                 self.activate_train_mode()
                 if self.early_stopping.early_stop:
                     break
-            
+
+        self.loss_history['train_loss'].append(train_loss / (i+1))
+        
     @torch.no_grad()
     def evaluate(self, mode, cpu_sampling=False):
         streaming = self.args.streaming
@@ -237,13 +244,37 @@ class OneFoldTrainer:
             # Restore early stopping best score so it doesn't overwrite immediately
             self.early_stopping.best_score = None  # will re-evaluate on first val step
 
+        # start resource monitoring
+        train_cpu_sampler = CPUSampler(interval=1)
+        train_gpu_sampler = GPUSampler(interval=1)
+        self.events.start_time = time.time()
+        train_cpu_sampler.start()
+        train_gpu_sampler.start()
+        
+        plots_dir = os.path.join('plots', self.cfg['name'])
+        os.makedirs(plots_dir, exist_ok=True)
+        plot_path = os.path.join(plots_dir, f'fold{self.fold:02d}_training_resources.png')
+        periodic_plotter = PeriodicPlotter(train_cpu_sampler, train_gpu_sampler, plot_path, interval_sec=1*3600) # plot every 2 hours
+        periodic_plotter.start()
+
         for epoch in range(self.tp_cfg['max_epochs']):
             print('\n[INFO] Fold: {}, Epoch: {}'.format(self.fold, epoch))
+            self.events.mark(f"Start epoch {epoch}")  # Mark the start of the epoch
             self.train_one_epoch(epoch)
             trained_epochs += 1
             if self.early_stopping.early_stop:
+                self.events.mark(f"Early stopping triggered at epoch {epoch}")  # Mark early stopping event
                 break
-        
+
+        periodic_plotter.stop()
+        train_cpu_sampler.stop()
+        train_gpu_sampler.stop()
+        plot_resource_usage(
+            train_cpu_sampler, train_gpu_sampler,
+            f'plots/{self.cfg["name"]}_fold{self.fold:02d}_training_resources.png',
+            events=self.events.events
+        )
+
         self.model.load_state_dict(torch.load(os.path.join(self.ckpt_path, self.ckpt_name)))
         y_true, y_pred, latency, inference_times, cpu_sampler = self.evaluate(mode='test')
         print('')
@@ -267,6 +298,7 @@ def main():
     parser.add_argument('--gpu', type=str, default="0", help='gpu id')
     parser.add_argument('--config', type=str, help='config file path')
     parser.add_argument('--override', type=str, help='config override path')
+    parser.add_argument('--streaming', action='store_true', help='enable streaming evaluation mode')
 
     args = parser.parse_args()
 
