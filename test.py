@@ -88,7 +88,7 @@ class OneFoldEvaluator(OneFoldTrainer):
         print('[INFO] Model loaded from {}'.format(os.path.join(self.ckpt_path, self.ckpt_name)))
 
         y_true, y_pred, latency_stats, inference_times, cpu_stats = self.evaluate(mode='test')
-        save_cm(y_true, y_pred, self.ckpt_path+'_new_data', self.fold)
+        save_cm(y_true, y_pred, self.ckpt_path, self.fold)
         return y_true, y_pred, latency_stats, inference_times, cpu_stats
 
 def update_config(base_config, override_config):
@@ -130,7 +130,6 @@ def main():
     
     if config['name'] is None:
         config['name'] = os.path.basename(args.config).replace('.json', '') 
-    # config['name'] = config['name']+"_new_data"
     Y_true = np.zeros(0)
     Y_pred = np.zeros((0, config['classifier']['num_classes']))
 

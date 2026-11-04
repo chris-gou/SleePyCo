@@ -41,7 +41,7 @@ def load_config(base_path, ablation, value, dataset, epoch):
         return update_config(config, json.load(f))
 
 def results_path(config):
-    return os.path.join("checkpoints", config["name"] + "_new_data", "raw_results.json")
+    return os.path.join("checkpoints", config["name"], "raw_results.json")
 
 def load_results(path):
     if not os.path.exists(path):

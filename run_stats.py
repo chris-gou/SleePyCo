@@ -28,7 +28,7 @@ def collect(args):
             if config is None:
                 continue
             # data = load_results(results_path(config))
-            data_all = load_results_aggr(config["name"]+"_new_data")
+            data_all = load_results_aggr(config["name"])
             for fold in range(1, n_folds + 1):
                 # mf1 = get_fold_metric(data, dataset, args.ablation, value, epoch, fold)
                 mf1 = get_fold_metric_aggr(data_all, fold)

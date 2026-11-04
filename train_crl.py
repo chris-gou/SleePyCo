@@ -163,7 +163,6 @@ def main():
             override_config = json.load(f)
         update_config(config, override_config)
     config['name'] = os.path.basename(args.config).replace('.json', '') if not config.get('name') else config['name']
-    config['name'] = config['name']+"_new_data"
 
     try:
         for fold in range(1, config['dataset']['num_splits'] + 1):

@@ -53,7 +53,6 @@ class OneFoldTrainer:
             load_name = self.cfg['name'].replace('SL-{:02d}'.format(self.ds_cfg['seq_len']), 'SL-01')
             load_name = load_name.replace('numScales-{}'.format(self.fp_cfg['num_scales']), 'numScales-1')
             load_name = load_name.replace(self.tp_cfg['mode'], 'pretrain')
-            load_name = load_name.replace('_new_data', '')
             load_path = os.path.join('checkpoints', load_name, 'ckpt_fold-{0:02d}.pth'.format(self.fold))
             print('[INFO] Loading model from: {}'.format(load_path))
             model.load_state_dict(torch.load(load_path), strict=False)
@@ -355,7 +354,6 @@ def main():
     
     if config['name'] is None:
         config['name'] = os.path.basename(args.config).replace('.json', '') 
-    config['name'] = config['name']+"_new_data"
     Y_true = np.zeros(0)
     Y_pred = np.zeros((0, config['classifier']['num_classes']))
 
