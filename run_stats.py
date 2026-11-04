@@ -78,14 +78,8 @@ def plot_cell(df, dataset, epoch, out_path):
         axes[1, i].set_title("Q-Q plot")
     fig.suptitle(f"{dataset}, {epoch}s epochs")
     fig.tight_layout()
-    fig.savefig(out_path, dpi=150)
+    fig.savefig(f"{STAT_RESULTS_DIR}/{out_path}", dpi=150)
     plt.close(fig)
-
-
-def use_page_test(ablation, dataset, epoch):
-    """Page trend test (ordered alternative) only where a monotone width trend is expected."""
-    return ablation == "width" and (dataset == "Sleep-EDF-2018" or (dataset == "Physio-2018" and epoch == 10))
-
 
 def run_tests(df, ablation):
     levels = [str(v) for v in ABLATION_VALUES[ablation]]
@@ -97,8 +91,8 @@ def run_tests(df, ablation):
             print(f"[skip tests] {dataset} E={epoch}s: only {len(wide)} complete folds")
             continue
 
-        if use_page_test(ablation, dataset, epoch):
-            r = page_trend_test(wide.values)  # columns = predicted increasing order
+        if ablation == "width":
+            r = page_trend_test(wide.values)  # run Page's L test for ordered alternatives (all width since it is assumed that 0.5 < 0.75 < 1.0)
             results.append({"epoch_s": int(epoch), "test": "page", "levels": levels,
                             "stat": r.statistic, "p": r.pvalue})
         else:
@@ -106,10 +100,12 @@ def run_tests(df, ablation):
             results.append({"epoch_s": int(epoch), "test": "friedman", "levels": levels,
                             "stat": stat, "p": p})
 
-        for a, b in itertools.combinations(levels, 2):
-            stat, p = wilcoxon(wide[a], wide[b])
+        pairs = list(itertools.combinations(levels, 2))
+        raw = [wilcoxon(wide[a], wide[b]) for a, b in pairs]
+        p_holm = multipletests([r.pvalue for r in raw], method="holm")[1]
+        for (a, b), r, p in zip(pairs, raw, p_holm):
             results.append({"epoch_s": int(epoch), "test": "wilcoxon", "levels": [a, b],
-                            "stat": stat, "p": p})
+                            "stat": r.statistic, "p": r.pvalue, "p_holm": p})
     return results
 
 
