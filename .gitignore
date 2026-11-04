@@ -137,3 +137,5 @@ datasets/
 *.zip
 *.pdf
 results/
+*.png
+*.json
