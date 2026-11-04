@@ -5,7 +5,18 @@ import numpy as np
 from transform import *
 from torch.utils.data import Dataset
 from tqdm import tqdm
-
+from scipy.signal import resample_poly
+import zipfile
+ 
+ 
+def npz_shape(path, key='x'):
+    """Shape of one array inside an .npz, read from the header only (no data load)."""
+    with zipfile.ZipFile(path) as z, z.open(f'{key}.npy') as f:
+        major, _ = np.lib.format.read_magic(f)
+        read = np.lib.format.read_array_header_1_0 if major == 1 else np.lib.format.read_array_header_2_0
+        shape, _, _ = read(f)
+    return shape
+ 
 DB_PATH = "/mnt/truenas_db/user/christina"
 
 class EEGDataLoader(Dataset):
@@ -34,7 +45,7 @@ class EEGDataLoader(Dataset):
 
         # fix datasets
         self.dataset_path = config['dataset']['dataset_path'] if config['dataset']['dataset_path'] else os.path.join(self.root_dir, 'dset', self.dset_name, 'npz')
-        print(f"[INFO] Loading dataset from {self.dataset_path}")
+        print(f"[INFO] Dataset path: {self.dataset_path}")
         self.inputs, self.labels, self.epochs = self.split_dataset()
         
         if self.epoch_duration != 30:
@@ -70,6 +81,13 @@ class EEGDataLoader(Dataset):
     def __len__(self):
         return len(self.epochs)
 
+    def _to_target_sr(self, x, fs):
+        if fs == self.sr:
+           return x
+        n = x.shape[0]
+        flat = resample_poly(x.reshape(-1), self.sr, fs)
+        return flat.reshape(n, -1).astype(np.float32)
+
     def __getitem__(self, idx):
         n_sample = int(self.epoch_duration) * self.sr * self.seq_len
         file_idx, start, seq_len = self.epochs[idx]
@@ -99,17 +117,21 @@ class EEGDataLoader(Dataset):
                 raw_labels.append(self.labels[file_idx][flat]) # pre-split labels
 
             inputs = np.stack(raw_inputs)  # (seq_len, window)
-            labels = np.array(raw_labels)
+            labels = np.array(raw_labels)            
         else:
             if not hasattr(self, '_mmap_cache'):
                 self._mmap_cache = {}
             data = self.inputs[file_idx]
             if isinstance(data, str):
-                if file_idx not in self._mmap_cache:
-                    self._mmap_cache[file_idx] = np.load(self.inputs[file_idx], mmap_mode='r')
-                npz_file = self._mmap_cache[file_idx]
-                inputs = npz_file['x'][start:start + seq_len]
-                labels = npz_file['y'][start:start + seq_len]
+                with np.load(self.inputs[file_idx]) as f:
+                    inputs = self._to_target_sr(f['x'][start:start + seq_len], int(f['fs']))
+                labels = self.labels[file_idx][start:start + seq_len]
+                # if file_idx not in self._mmap_cache:
+                #     self._mmap_cache[file_idx] = np.load(self.inputs[file_idx], mmap_mode='r')
+                # npz_file = self._mmap_cache[file_idx]
+                # inputs = npz_file['x'][start:start + seq_len]
+                # inputs = self._to_target_sr(inputs, int(npz_file['fs']))
+                # labels = npz_file['y'][start:start + seq_len]
             else:
                 npz_file = data
                 inputs = npz_file[start:start + seq_len]
@@ -138,17 +160,50 @@ class EEGDataLoader(Dataset):
         
         return inputs, labels
 
+    def get_subject(self, file_idx):
+        """All epochs of one recording, preprocessed like __getitem__.
+        Returns (n_epochs, samples_per_epoch) and labels. Used by streaming eval."""
+        data = self.inputs[file_idx]
+        labels = self.labels[file_idx]
+        if not isinstance(data, str):
+            return data, labels  # already in memory (non-SHHS)
+ 
+        with np.load(data) as f:
+            x = f['x']
+            fs = int(f['fs'])
+ 
+        if self.epoch_duration == 30:
+            return self._to_target_sr(x, fs), labels
+ 
+        # SHHS sub-epochs: same windows and order as the lazy branch of __getitem__
+        window = int(self.epoch_duration * self.sr)
+        hop = int((self.hop if self.hop > 0 else self.epoch_duration) * self.fs)
+        starts = range(0, int(30 * self.sr) - window + 1, hop)
+        x = np.stack([x[:, s:s + window] for s in starts], axis=1).reshape(-1, window)
+        return x, labels
+    
+    def _check_no_overlap(self, fname_dict):
+        for a, b in [('train', 'val'), ('train', 'test'), ('val', 'test')]:
+            overlap = set(fname_dict[a]) & set(fname_dict[b])
+            assert not overlap, (
+                f"Fold {self.fold}: {len(overlap)} files in both {a} and {b}, "
+                f"e.g. {sorted(overlap)[:5]}"
+            )
+        for mode, files in fname_dict.items():
+            assert len(files) == len(set(files)), f"Fold {self.fold}: duplicate files in {mode}"
+    
     def split_dataset(self):
 
         file_idx = 0
         inputs, labels, epochs = [], [], []
         data_root = os.path.join(self.dataset_path, self.eeg_channel)
+        print(f"[INFO] Loading data from {data_root}")
         data_fname_list = [os.path.basename(x) for x in sorted(glob.glob(os.path.join(data_root, '*.npz')))]
         data_fname_dict = {'train': [], 'test': [], 'val': []}
         split_idx_list = np.load(os.path.join('./split_idx', 'idx_{}.npy'.format(self.dset_name)), allow_pickle=True)
-
+        
         assert len(split_idx_list) == self.num_splits
-    
+        print(f"[INFO] Dataset {self.dset_name} has {len(data_fname_list)} files, split into {self.num_splits} folds")
         if self.dset_name == 'Sleep-EDF-2013':
             for i in range(len(data_fname_list)):
                 subject_idx = int(data_fname_list[i][3:5])
@@ -171,27 +226,36 @@ class EEGDataLoader(Dataset):
                     data_fname_dict[self.set].append(data_fname_list[i])
         else:
             raise NameError("dataset '{}' cannot be found.".format(self.dataset))
-            
+        self._check_no_overlap(data_fname_dict)
+        assert len(data_fname_dict[self.set]) > 0, f"Fold {self.fold}: no files for {self.set}"
+        print(f"[INFO] Fold {self.fold}: {len(data_fname_dict['train'])} train, {len(data_fname_dict['val'])} val, {len(data_fname_dict['test'])} test files")
+        
         for data_fname in tqdm(data_fname_dict[self.set]): # progress bar for loading files
             fpath = os.path.join(data_root, data_fname)
 
             if self.dset_name == 'SHHS':
-                npz_file = np.load(fpath, mmap_mode='r')
-                labels.append(np.array(npz_file['y']))  # labels are tiny, safe to materialize
-                inputs.append(fpath)                     # store path instead of data
-                npz_file._mmap.close() if hasattr(npz_file, '_mmap') else None
+                with np.load(fpath) as f:
+                    labels.append(np.array(f['y']))
+                inputs.append(fpath)
             else:
-                npz_file = np.load(fpath, mmap_mode='r')
-                inputs.append(npz_file['x'])
+                # npz_file = np.load(fpath, mmap_mode='r')
+                # inputs.append(npz_file['x'])
+                # labels.append(npz_file['y'])
+                npz_file = np.load(fpath)
+                inputs.append(self._to_target_sr(npz_file['x'], int(npz_file['fs'])))
                 labels.append(npz_file['y'])
-
+                assert inputs[-1].shape[1] == 30 * self.sr, f"{data_fname}: {inputs[-1].shape}"
+                
             seq_len = self.seq_len
             if self.dset_name== 'MASS' and ('-02-' in data_fname or '-04-' in data_fname or '-05-' in data_fname):
                 seq_len = int(self.seq_len * 1.5)
-            for i in range(len(npz_file['y']) - seq_len + 1):
-                epochs.append([file_idx, i, seq_len])
+
+            valid = (labels[-1] >= 0) & (labels[-1] < 5)
+
+            for i in range(len(labels[-1]) - seq_len + 1):
+                if valid[i:i + seq_len].all():
+                    epochs.append([file_idx, i, seq_len])
             file_idx += 1
-        
         return inputs, labels, epochs
 
     def split_pre_epoched(self, inputs, labels, window, hop, inherit=True):
@@ -222,9 +286,10 @@ class EEGDataLoader(Dataset):
 
             new_inputs.append(x_out)
             new_labels.append(y_out)
-
+            valid = (y_out >= 0) & (y_out < 5)
             for i in range(len(y_out)-self.seq_len+1):
-                new_epochs.append([file_idx, i , self.seq_len])
+                if valid[i:i+self.seq_len].all():
+                    new_epochs.append([file_idx, i , self.seq_len])
             file_idx+=1
         
         return new_inputs, new_labels, new_epochs
@@ -232,10 +297,9 @@ class EEGDataLoader(Dataset):
     def split_pre_epoched_lazy(self, inputs, labels, window, hop): 
         new_epochs, new_labels_flat,new_inputs, file_idx = [], [], [], 0
 
-        for x_file, y_file in zip(inputs, labels):
+        for x_file, y_file in tqdm(zip(inputs, labels)):
             if isinstance(x_file, str):
-                npz_file = np.load(x_file, mmap_mode='r')
-                N, base_len = npz_file['x'].shape[0], npz_file['x'].shape[1]
+                N, base_len = npz_shape(x_file)[:2]
             else:
                 N, base_len = x_file.shape[0], x_file.shape[1]
                 
