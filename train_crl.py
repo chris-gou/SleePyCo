@@ -11,6 +11,7 @@ from utils import *
 from loss import SupConLoss
 from loader import EEGDataLoader
 from models.main_model import MainModel
+from pyutils.helpers import notify
 
 
 class OneFoldTrainer:
@@ -46,7 +47,11 @@ class OneFoldTrainer:
         return model
     
     def build_dataloader(self):
-        dataloader_args = {'batch_size': self.tp_cfg['batch_size'], 'shuffle': True, 'num_workers': 4*len(self.args.gpu.split(",")), 'pin_memory': True}
+        dataloader_args = {'batch_size': self.tp_cfg['batch_size'], 
+                           'shuffle': True, 
+                           'num_workers': 4*len(self.args.gpu.split(",")), 
+                           'pin_memory': False
+        }
         train_dataset = EEGDataLoader(self.cfg, self.fold, set='train')
         train_loader = DataLoader(dataset=train_dataset, **dataloader_args)
         val_dataset = EEGDataLoader(self.cfg, self.fold, set='val')
@@ -55,7 +60,7 @@ class OneFoldTrainer:
 
         return {'train': train_loader, 'val': val_loader}
 
-    def train_one_epoch(self):
+    def train_one_epoch(self, accum_steps=2):
         self.model.train()
         train_loss = 0
 
@@ -70,16 +75,23 @@ class OneFoldTrainer:
             features = torch.cat([f1.unsqueeze(1), f2.unsqueeze(1)], dim=1)
             loss += self.criterion(features, labels)
             
-            self.optimizer.zero_grad()
+            
             loss.backward()
-            self.optimizer.step()
+            if (i + 1) % accum_steps == 0:
+                self.optimizer.step()
+                self.optimizer.zero_grad()
 
-            train_loss += loss.item()
-            self.train_iter += 1
+                if accum_steps != 1:
+                    self.train_iter += 1
+
+            if accum_steps == 1:
+                self.train_iter += 1
+
+            train_loss += loss.item() * accum_steps
 
             progress_bar(i, len(self.loader_dict['train']), 'Lr: %.4e | Loss: %.3f' %(get_lr(self.optimizer), train_loss / (i + 1)))
 
-            if self.train_iter % self.tp_cfg['val_period'] == 0:
+            if self.train_iter % self.tp_cfg['val_period'] == 0 and self.train_iter != 0:
                 print('')
                 val_loss = self.evaluate(mode='val')
                 self.early_stopping(None, val_loss, self.model)
@@ -111,9 +123,20 @@ class OneFoldTrainer:
     def run(self):
         for epoch in range(self.tp_cfg['max_epochs']):
             print('\n[INFO] Fold: {}, Epoch: {}'.format(self.fold, epoch))
-            self.train_one_epoch()
+            steps = 256 // self.tp_cfg['batch_size']
+            if steps != 1:
+                print(f'[INFO] Using gradient accumulation with {steps} steps.')
+            self.train_one_epoch(accum_steps=steps)
             if self.early_stopping.early_stop:
                 break
+
+def update_config(base_config, override_config):
+    for key, value in override_config.items():
+        if key in base_config and isinstance(base_config[key], dict) and isinstance(value, dict):
+            update_config(base_config[key], value)
+        else:
+            base_config[key] = value
+    return base_config
 
 def main():
     warnings.filterwarnings("ignore", category=DeprecationWarning) 
@@ -123,8 +146,10 @@ def main():
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--gpu', type=str, default="0", help='gpu id')
     parser.add_argument('--config', type=str, help='config file path')
+    parser.add_argument('--resume', type=bool, default=False, help='resume from checkpoint')
+    parser.add_argument('--override', type=str, help='config override path')
     args = parser.parse_args()
-
+    print('[INFO] Arguments: {}'.format(args))
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"   
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
@@ -133,11 +158,21 @@ def main():
 
     with open(args.config) as config_file:
         config = json.load(config_file)
-    config['name'] = os.path.basename(args.config).replace('.json', '')
-    
-    for fold in range(1, config['dataset']['num_splits'] + 1):
-        trainer = OneFoldTrainer(args, fold, config)
-        trainer.run()
+    if args.override:
+        with open(args.override) as f:
+            override_config = json.load(f)
+        update_config(config, override_config)
+    config['name'] = os.path.basename(args.config).replace('.json', '') if not config.get('name') else config['name']
+    config['name'] = config['name']+"_new_data"
+
+    try:
+        for fold in range(1, config['dataset']['num_splits'] + 1):
+            trainer = OneFoldTrainer(args, fold, config)
+            trainer.run()
+    except Exception as e:
+        notify(f"Training failed for config: {config['name']} with error: {str(e)}")
+        raise e
+    notify(f"Training finished for config: {config['name']}")
 
 
 if __name__ == "__main__":

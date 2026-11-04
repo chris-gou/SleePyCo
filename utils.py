@@ -174,14 +174,24 @@ class EarlyStopping:
         torch.save(model.state_dict(), os.path.join(self.ckpt_path, self.ckpt_name))
         self.init_metric = val_metric
 
+def safe_get(data, keys, default=None):
+    """Safely get a nested value from a dictionary using a list of keys."""
+    for key in keys:
+        if isinstance(data, dict) and key in data:
+            data = data[key]
+        else:
+            return default
+    return data
 
-def summarize_result(config, fold, y_true, y_pred, save=True, latency_stats=None, elapsed_time=None, epochs_per_fold=None, summary=False, cpu_sampler=None, streaming = False, inference_times=None):
-    output_dir = os.path.join(DB_PATH, 'sleepyco')
+def summarize_result(config, fold, y_true, y_pred, save=True, latency_stats=None, elapsed_time=None, epochs_per_fold=None, summary=False, cpu_sampler=None, streaming = False, inference_times=None, device=None):
+    output_dir = os.path.join('results', 'sleepyco')
     os.makedirs(output_dir, exist_ok=True)
     results_file_base_name = config['name']
 
-    if cpu_sampler is not None:
+    if device == 'cpu':
         results_file_name = f"cpu_{results_file_base_name}" if not streaming else f"cpu_streaming_{results_file_base_name}"
+    elif device == 'cuda':
+        results_file_name = results_file_base_name if not streaming else f"gpu_streaming_{results_file_base_name}"
     else:
         results_file_name = results_file_base_name if not streaming else f"streaming_{results_file_base_name}"
 
@@ -192,29 +202,29 @@ def summarize_result(config, fold, y_true, y_pred, save=True, latency_stats=None
     result_dict = skmet.classification_report(y_true, y_pred_argmax, digits=3, output_dict=True)
     cm = skmet.confusion_matrix(y_true, y_pred_argmax)
     
-    accuracy = round(result_dict['accuracy']*100, 1)
-    macro_f1 = round(result_dict['macro avg']['f1-score']*100, 1)
-    kappa = round(skmet.cohen_kappa_score(y_true, y_pred_argmax), 3)
+    accuracy = safe_get(result_dict, ['accuracy'], default=0.0)
+    macro_f1 = safe_get(result_dict, ['macro avg', 'f1-score'], default=0.0)
+    kappa = safe_get(result_dict, ['weighted avg', 'kappa'], default=0.0)
     
-    wpr = round(result_dict['0.0']['precision']*100, 1)
-    wre = round(result_dict['0.0']['recall']*100, 1)
-    wf1 = round(result_dict['0.0']['f1-score']*100, 1)
+    wpr = safe_get(result_dict, ['0.0', 'precision'], default=0.0)
+    wre = safe_get(result_dict, ['0.0', 'recall'], default=0.0)
+    wf1 = safe_get(result_dict, ['0.0', 'f1-score'], default=0.0)
     
-    n1pr = round(result_dict['1.0']['precision']*100, 1)
-    n1re = round(result_dict['1.0']['recall']*100, 1)
-    n1f1 = round(result_dict['1.0']['f1-score']*100, 1)
+    n1pr = safe_get(result_dict, ['1.0', 'precision'], default=0.0)
+    n1re = safe_get(result_dict, ['1.0', 'recall'], default=0.0)
+    n1f1 = safe_get(result_dict, ['1.0', 'f1-score'], default=0.0)
 
-    n2pr = round(result_dict['2.0']['precision']*100, 1)
-    n2re = round(result_dict['2.0']['recall']*100, 1)
-    n2f1 = round(result_dict['2.0']['f1-score']*100, 1)
+    n2pr = safe_get(result_dict, ['2.0', 'precision'], default=0.0)
+    n2re = safe_get(result_dict, ['2.0', 'recall'], default=0.0)
+    n2f1 = safe_get(result_dict, ['2.0', 'f1-score'], default=0.0)
     
-    n3pr = round(result_dict['3.0']['precision']*100, 1)
-    n3re = round(result_dict['3.0']['recall']*100, 1)
-    n3f1 = round(result_dict['3.0']['f1-score']*100, 1)
+    n3pr = safe_get(result_dict, ['3.0', 'precision'], default=0.0)
+    n3re = safe_get(result_dict, ['3.0', 'recall'], default=0.0)
+    n3f1 = safe_get(result_dict, ['3.0', 'f1-score'], default=0.0)
     
-    rpr = round(result_dict['4.0']['precision']*100, 1)
-    rre = round(result_dict['4.0']['recall']*100, 1)
-    rf1 = round(result_dict['4.0']['f1-score']*100, 1)
+    rpr = safe_get(result_dict, ['4.0', 'precision'], default=0.0)
+    rre = safe_get(result_dict, ['4.0', 'recall'], default=0.0)
+    rf1 = safe_get(result_dict, ['4.0', 'f1-score'], default=0.0)
     
     overall_data = [
         ['ACC', 'MF1', '\u03BA'],
@@ -354,3 +364,9 @@ def plot_confusion_and_f1(y_true, y_pred, class_names, save_path_prefix):
     ax.set_ylim(0, 1)
     fig.savefig(f'{save_path_prefix}_per_class_f1.png')
     plt.close(fig)
+
+def save_cm(y_true, y_pred, save_path, fold):
+    y_pred_labels = y_pred.argmax(axis=1)  
+    cm = skmet.confusion_matrix(y_true, y_pred_labels)
+    np.savez(os.path.join(save_path, f"fold_{fold}_reconstructed.npz",), y_true=y_true, y_pred=y_pred, confmat=cm)
+    print(f"[INFO] Confusion matrix saved to {os.path.join(save_path, f'fold_{fold}_reconstructed.npz')}")
