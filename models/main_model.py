@@ -30,6 +30,7 @@ class MainModel(nn.Module):
         self.cfg = config
         self.bb_cfg = config['backbone']
         self.training_mode = config['training_params']['mode']
+        self.width_multiplier = config['training_params'].get('width_multiplier', 1.0)
 
         if self.bb_cfg['name'] == 'SleePyCo':
             self.feature = SleePyCoBackbone(self.cfg)
@@ -55,13 +56,13 @@ class MainModel(nn.Module):
                 self.head = nn.Sequential(
                     nn.AdaptiveAvgPool1d(1),
                     nn.Flatten(),
-                    nn.Linear(last_chn_dict[config['backbone']['name']], proj_dim)
+                    nn.Linear(int(last_chn_dict[config['backbone']['name']] * self.width_multiplier), proj_dim)
                 )
             elif config['proj_head']['name'] == 'MLP':
                 self.head = nn.Sequential(
                     nn.AdaptiveAvgPool1d(1),
                     nn.Flatten(),
-                    nn.Linear(last_chn_dict[config['backbone']['name']], proj_dim),
+                    nn.Linear(int(last_chn_dict[config['backbone']['name']] * self.width_multiplier), proj_dim), # 256*width
                     nn.ReLU(inplace=True),
                     nn.Linear(proj_dim, proj_dim)
                 )
