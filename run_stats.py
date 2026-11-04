@@ -17,7 +17,7 @@ from statsmodels.stats.multitest import multipletests
 from common import (ABLATION_VALUES, DATASETS, EPOCH_DURATIONS, get_fold_metric,
                     load_config, load_results, results_path, load_results_aggr, get_fold_metric_aggr)
 
-
+STAT_RESULTS_DIR = "results/sleepyco/statistical_tests"
 def collect(args):
     """Long DataFrame: one row per (epoch_s, ablation_level, fold)."""
     dataset, n_folds = DATASETS[args.dataset]
@@ -126,15 +126,15 @@ def main():
         return
 
     tag = f"{args.dataset}_{args.ablation}"
-    marginal_normality(df).to_csv(f"shapiro_marginal_{tag}.csv", index=False)
-    pairwise_difference_normality(df).to_csv(f"shapiro_pairwise_diff_{tag}.csv", index=False)
+    marginal_normality(df).to_csv(f"{STAT_RESULTS_DIR}/shapiro_marginal_{tag}.csv", index=False)
+    pairwise_difference_normality(df).to_csv(f"{STAT_RESULTS_DIR}/shapiro_pairwise_diff_{tag}.csv", index=False)
     for (dataset, epoch), _ in df.groupby(["dataset", "epoch_s"]):
         plot_cell(df, dataset, epoch, f"dist_{tag}_{epoch}s.png")
 
     results = run_tests(df, args.ablation)
     for r in results:
         print(f"E={r['epoch_s']}s {r['test']:9s} {' vs '.join(r['levels']):20s} p={r['p']:.4f}")
-    with open(f"results/sleepyco/statistical_tests/{tag}.json", "w") as f:
+    with open(f"{STAT_RESULTS_DIR}/{tag}.json", "w") as f:
         json.dump(results, f, indent=2, default=float)
 
 
