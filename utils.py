@@ -187,10 +187,11 @@ def summarize_result(config, fold, y_true, y_pred, save=True, latency_stats=None
     output_dir = os.path.join('results', 'sleepyco')
     os.makedirs(output_dir, exist_ok=True)
     results_file_base_name = config['name']
-
-    if device == 'cpu':
+    if str(device) == 'cpu':
+        print(f"[INFO] device == cpu: {str(device)== 'cpu'}")
         results_file_name = f"cpu_{results_file_base_name}" if not streaming else f"cpu_streaming_{results_file_base_name}"
-    elif device == 'cuda':
+    elif str(device) == 'cuda':
+        print(f"[INFO] device == cuda: {str(device)== 'cuda'}")
         results_file_name = results_file_base_name if not streaming else f"gpu_streaming_{results_file_base_name}"
     else:
         results_file_name = results_file_base_name if not streaming else f"streaming_{results_file_base_name}"
@@ -201,7 +202,7 @@ def summarize_result(config, fold, y_true, y_pred, save=True, latency_stats=None
     y_pred_argmax = np.argmax(y_pred, 1)
     result_dict = skmet.classification_report(y_true, y_pred_argmax, digits=3, output_dict=True)
     cm = skmet.confusion_matrix(y_true, y_pred_argmax)
-    
+
     accuracy = safe_get(result_dict, ['accuracy'], default=0.0)
     macro_f1 = safe_get(result_dict, ['macro avg', 'f1-score'], default=0.0)
     kappa = safe_get(result_dict, ['weighted avg', 'kappa'], default=0.0)
