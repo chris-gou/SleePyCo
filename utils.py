@@ -254,7 +254,7 @@ def summarize_result(config, fold, y_true, y_pred, save=True, latency_stats=None
         latency_dir = os.path.join(output_dir, 'latencies')
         os.makedirs(latency_dir, exist_ok=True)
         if streaming:
-            latency_fname = os.path.join(latency_dir, f'streaming_latency_{config["name"]}_fold{fold:02d}.npy')
+            latency_fname = os.path.join(latency_dir, f'streaming_latency_{device}_{config["name"]}_fold{fold:02d}.npy')
         else:
             latency_fname = os.path.join(latency_dir, f'latency_{config["name"]}_fold{fold:02d}.npy')
         np.save(latency_fname, np.array(inference_times))
